@@ -51,7 +51,7 @@
 ### Установка и запуск
 
 ```bash
-git clone https://github.com/<ВАШ_ЛОГИН>/inkvizitor.git
+git clone https://github.com/andryhasayan-source/inkvizitor.git
 cd inkvizitor
 pip install -r requirements.txt
 python main.py
@@ -126,7 +126,7 @@ someone else's code.
 ### Install & run
 
 ```bash
-git clone https://github.com/<YOUR_LOGIN>/inkvizitor.git
+git clone https://github.com/andryhasayan-source/inkvizitor.git
 cd inkvizitor
 pip install -r requirements.txt
 python main.py
