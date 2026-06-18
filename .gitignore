@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- PyInstaller (сборка .exe / build artifacts) ---
+build/
+dist/
+*.spec
+
+# --- Отчёты Инквизитора / Inquisitor reports ---
+*.cleaned.py
+inkvizitor_report_*.html
+inkvizitor_report_*.txt
+
+# --- Локальные артефакты разработки (не для репозитория) ---
+# local dev artifacts — not for the repository
+_*.py
+preview*.png
+test_report*.html
+test_samples/
+test_folder/
+Inkvizitor_Tests/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
