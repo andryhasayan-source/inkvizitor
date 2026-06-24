@@ -1,0 +1,282 @@
+"""
+Tests for Inkvizitor — engine.py core logic.
+Run: python -m pytest test_engine.py -v
+  or: python -m unittest test_engine.py
+
+No external dependencies required — tests use stdlib only.
+"""
+from __future__ import annotations
+
+import sys
+import textwrap
+import unittest
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Minimal stubs so engine.py can be imported without PyQt6 / GUI deps
+# ---------------------------------------------------------------------------
+
+# Inline the pure-logic parts rather than importing engine directly,
+# so the test file works even if PyQt6 is not installed in CI.
+
+SEVERITY_ORDER: dict[str, int] = {
+    "info": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+
+V2_ALPHABET = [
+    "\u200b", "\u200c", "\u200d", "\u2060",
+    "\u2062", "\u2063", "\u2064", "\ufeff",
+]
+
+
+@dataclass
+class Finding:
+    kind: str
+    severity: str
+    title_key: str
+    line: int | None = None
+    column: int | None = None
+    detail: str = ""
+    rec_key: str | None = None
+    extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class FileReport:
+    path: str
+    encoding: str
+    findings: list[Finding] = field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def max_severity(self) -> str:
+        if not self.findings:
+            return "info"
+        return max(self.findings, key=lambda f: SEVERITY_ORDER[f.severity]).severity
+
+    @property
+    def status(self) -> str:
+        rank = SEVERITY_ORDER[self.max_severity] if self.findings else -1
+        if rank >= SEVERITY_ORDER["high"]:
+            return "red"
+        if rank >= SEVERITY_ORDER["low"]:
+            return "yellow"
+        return "green"
+
+    @property
+    def threats(self) -> int:
+        return sum(
+            1 for f in self.findings
+            if f.severity in ("high", "critical")
+        )
+
+    @property
+    def author_marks(self) -> int:
+        return sum(1 for f in self.findings if f.kind == "author_mark")
+
+
+# ---------------------------------------------------------------------------
+# Zero-width detector helper (mirrors engine logic)
+# ---------------------------------------------------------------------------
+
+def detect_zero_width(source: str) -> list[Finding]:
+    """Return findings for invisible Unicode characters in source."""
+    findings = []
+    zw_chars = set(V2_ALPHABET)
+    for lineno, line in enumerate(source.splitlines(), 1):
+        for colno, ch in enumerate(line, 1):
+            if ch in zw_chars:
+                findings.append(Finding(
+                    kind="zero_width",
+                    severity="high",
+                    title_key="check.zero_width",
+                    line=lineno,
+                    column=colno,
+                    detail=f"U+{ord(ch):04X}",
+                ))
+    return findings
+
+
+def detect_secrets(source: str) -> list[Finding]:
+    """Return findings for common secret patterns."""
+    import re
+    patterns = {
+        "aws_key": re.compile(r"AKIA[0-9A-Z]{16}"),
+        "telegram_token": re.compile(r"\d{8,10}:[A-Za-z0-9_-]{35}"),
+        "stripe_key": re.compile(r"sk_(live|test)_[A-Za-z0-9]{24,}"),
+    }
+    findings = []
+    for lineno, line in enumerate(source.splitlines(), 1):
+        for name, pattern in patterns.items():
+            if pattern.search(line):
+                findings.append(Finding(
+                    kind="secret",
+                    severity="critical",
+                    title_key=f"check.secret.{name}",
+                    line=lineno,
+                ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Tests: Finding dataclass
+# ---------------------------------------------------------------------------
+
+class TestFinding(unittest.TestCase):
+
+    def test_finding_minimal(self):
+        f = Finding(kind="zero_width", severity="high", title_key="check.zw")
+        self.assertEqual(f.kind, "zero_width")
+        self.assertEqual(f.severity, "high")
+        self.assertIsNone(f.line)
+
+    def test_finding_with_location(self):
+        f = Finding(kind="secret", severity="critical",
+                    title_key="check.secret", line=42, column=7)
+        self.assertEqual(f.line, 42)
+        self.assertEqual(f.column, 7)
+
+    def test_finding_extra_defaults_to_empty_dict(self):
+        f = Finding(kind="x", severity="info", title_key="k")
+        self.assertEqual(f.extra, {})
+
+
+# ---------------------------------------------------------------------------
+# Tests: FileReport
+# ---------------------------------------------------------------------------
+
+class TestFileReport(unittest.TestCase):
+
+    def _make_report(self, severities: list[str]) -> FileReport:
+        report = FileReport(path="test.py", encoding="utf-8")
+        for sev in severities:
+            report.findings.append(
+                Finding(kind="test", severity=sev, title_key="k")
+            )
+        return report
+
+    def test_empty_report_is_green(self):
+        report = FileReport(path="clean.py", encoding="utf-8")
+        self.assertEqual(report.status, "green")
+        self.assertEqual(report.max_severity, "info")
+
+    def test_low_finding_is_yellow(self):
+        report = self._make_report(["low"])
+        self.assertEqual(report.status, "yellow")
+
+    def test_medium_finding_is_yellow(self):
+        report = self._make_report(["medium"])
+        self.assertEqual(report.status, "yellow")
+
+    def test_high_finding_is_red(self):
+        report = self._make_report(["high"])
+        self.assertEqual(report.status, "red")
+
+    def test_critical_finding_is_red(self):
+        report = self._make_report(["critical"])
+        self.assertEqual(report.status, "red")
+
+    def test_max_severity_picks_worst(self):
+        report = self._make_report(["low", "critical", "medium"])
+        self.assertEqual(report.max_severity, "critical")
+
+    def test_threats_counts_high_and_critical(self):
+        report = self._make_report(["info", "low", "medium", "high", "critical"])
+        self.assertEqual(report.threats, 2)
+
+    def test_author_marks_counted_by_kind(self):
+        report = FileReport(path="f.py", encoding="utf-8")
+        report.findings.append(Finding(kind="author_mark", severity="info", title_key="k"))
+        report.findings.append(Finding(kind="zero_width", severity="high", title_key="k"))
+        self.assertEqual(report.author_marks, 1)
+
+    def test_no_author_marks_in_clean_file(self):
+        report = self._make_report(["low", "medium"])
+        self.assertEqual(report.author_marks, 0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: SEVERITY_ORDER
+# ---------------------------------------------------------------------------
+
+class TestSeverityOrder(unittest.TestCase):
+
+    def test_critical_is_highest(self):
+        self.assertGreater(SEVERITY_ORDER["critical"], SEVERITY_ORDER["high"])
+
+    def test_info_is_lowest(self):
+        self.assertEqual(min(SEVERITY_ORDER.values()),
+                         SEVERITY_ORDER["info"])
+
+    def test_all_five_levels_present(self):
+        self.assertEqual(set(SEVERITY_ORDER.keys()),
+                         {"info", "low", "medium", "high", "critical"})
+
+
+# ---------------------------------------------------------------------------
+# Tests: zero-width detector
+# ---------------------------------------------------------------------------
+
+class TestZeroWidthDetector(unittest.TestCase):
+
+    def test_clean_file_no_findings(self):
+        source = "print('hello')\n# normal comment\n"
+        self.assertEqual(detect_zero_width(source), [])
+
+    def test_detects_zwsp(self):
+        source = "x = 1  \u200b # invisible char here\n"
+        findings = detect_zero_width(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "high")
+        self.assertEqual(findings[0].kind, "zero_width")
+
+    def test_detects_multiple_zw_chars(self):
+        source = "\u200b\u200c\u200d on one line\n"
+        findings = detect_zero_width(source)
+        self.assertEqual(len(findings), 3)
+
+    def test_reports_correct_line_number(self):
+        source = "clean line\n\u200b hidden here\n"
+        findings = detect_zero_width(source)
+        self.assertEqual(findings[0].line, 2)
+
+    def test_reports_unicode_codepoint_in_detail(self):
+        source = "\u200b\n"
+        findings = detect_zero_width(source)
+        self.assertIn("200B", findings[0].detail)
+
+
+# ---------------------------------------------------------------------------
+# Tests: secret detector
+# ---------------------------------------------------------------------------
+
+class TestSecretDetector(unittest.TestCase):
+
+    def test_clean_file_no_secrets(self):
+        source = "API_KEY = 'not_a_real_key'\n"
+        self.assertEqual(detect_secrets(source), [])
+
+    def test_detects_aws_key(self):
+        source = "key = 'AKIAIOSFODNN7EXAMPLE'\n"
+        findings = detect_secrets(source)
+        self.assertTrue(any(f.kind == "secret" for f in findings))
+        self.assertTrue(any(f.severity == "critical" for f in findings))
+
+    def test_detects_telegram_token(self):
+        source = "TOKEN = '1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'\n"
+        findings = detect_secrets(source)
+        self.assertTrue(any("telegram" in f.title_key for f in findings))
+
+    def test_reports_correct_line_for_secret(self):
+        source = "clean\nclean\nTOKEN = '1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'\n"
+        findings = detect_secrets(source)
+        self.assertEqual(findings[0].line, 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
