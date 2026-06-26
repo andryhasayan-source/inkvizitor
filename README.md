@@ -48,6 +48,10 @@
 - **Движок без зависимостей** (только стандартная библиотека) — работает и в консоли.
   Графический интерфейс — на PyQt6.
 
+### Статья на Medium
+
+📖 [I Built a Desktop Scanner That Detects Hidden Threats in Python Code](https://medium.com/@andryhasayan/b50815fbe2f1)
+
 ### Установка и запуск
 
 ```bash
@@ -122,6 +126,10 @@ someone else's code.
 - Dark theme, drag-and-drop a file/folder, **RU/EN** switch.
 - **Dependency-free engine** (standard library only) — runs headless too. The GUI uses
   PyQt6.
+
+### Medium Article
+
+📖 [I Built a Desktop Scanner That Detects Hidden Threats in Python Code](https://medium.com/@andryhasayan/b50815fbe2f1)
 
 ### Install & run
 
