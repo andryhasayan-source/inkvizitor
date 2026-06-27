@@ -167,4 +167,4 @@ marks is done by a separate tool.
 ### License & author
 
 MIT © 2026 **ShashevPro** · [shashevpro.ru](https://www.shashevpro.ru/) ·
-[vk.com/andrey_shashev](https://vk.com/andrey_shashev)
+[vk.com/shashevpro](https://vk.com/shashevpro)
